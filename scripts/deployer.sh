@@ -73,6 +73,7 @@ sortie() { # sortie <pile> <region> <cle>
 prerequis
 P="stack-leman-$ENV"
 deployer_pile "$P-00-socle"         "$RACINE/templates/00-socle.yaml"          "$REGION"
+deployer_pile "$P-00b-budget"       "$RACINE/templates/00b-budget-us-east-1.yaml" "us-east-1"
 deployer_pile "$P-01-reseau"        "$RACINE/templates/01-reseau.yaml"         "$REGION"
 deployer_pile "$P-02-securite"      "$RACINE/templates/02-securite.yaml"       "$REGION"
 deployer_pile "$P-03-pare-feu"      "$RACINE/templates/03-pare-feu.yaml"       "$REGION"

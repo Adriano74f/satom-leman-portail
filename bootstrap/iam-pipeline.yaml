@@ -172,7 +172,6 @@ Resources:
                   - config:DescribeConfigurationRecorderStatus
                   - config:DescribeComplianceByConfigRule
                   - budgets:ViewBudget
-                  - budgets:DescribeBudgets
                   - secretsmanager:ListSecrets
                   - sns:ListSubscriptionsByTopic
                 Resource: '*'

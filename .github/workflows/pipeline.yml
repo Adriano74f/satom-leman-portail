@@ -38,7 +38,10 @@ jobs:
       - name: Installer cfn-lint
         run: pip install --quiet cfn-lint
       - name: cfn-lint sur chaque template (une erreur bloque la PR)
-        run: cfn-lint --non-zero-exit-code error templates/*.yaml bootstrap/*.yaml
+        run: |
+          # chaque template est verifie dans la region ou il est deploye
+          cfn-lint --non-zero-exit-code error --regions eu-central-2 $(ls templates/*.yaml | grep -v us-east-1) bootstrap/*.yaml
+          cfn-lint --non-zero-exit-code error --regions us-east-1 templates/*us-east-1.yaml
       - name: shellcheck des scripts
         run: shellcheck -S error scripts/*.sh tests/*.sh
 

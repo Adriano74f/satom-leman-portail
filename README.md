@@ -7,7 +7,7 @@ Le dépôt est la **source unique** : chaque ressource est décrite dans un temp
 | Élément | Choix |
 |---|---|
 | IaC | AWS CloudFormation, un template par domaine |
-| Région | `eu-central-2` (Zurich) ; WAF CloudFront en `us-east-1` |
+| Région | `eu-central-2` (Zurich) ; WAF CloudFront et budget en `us-east-1` |
 | Environnements | `dev` puis `prod` : mêmes templates, paramètres séparés, piles distinctes `stack-leman-<env>-*` |
 | Tags obligatoires | `Projet=SatomCloudNetwork`, `Equipe=af`, `Environnement=<dev\|prod>` (dans les templates et sur chaque pile) |
 | Budget | 150 CHF (165 USD), alerte à 80 % |
@@ -17,7 +17,8 @@ Le dépôt est la **source unique** : chaque ressource est décrite dans un temp
 ```
 satom-leman-portail/
 ├── templates/            # un YAML par domaine
-│   ├── 00-socle.yaml             KMS, journaux ALB (S3), SNS, pré-clés VPN (Secrets Manager), budget
+│   ├── 00-socle.yaml             KMS, journaux ALB (S3), SNS, pré-clés VPN (Secrets Manager)
+│   ├── 00b-budget-us-east-1.yaml budget 150 CHF, alerte à 80 % (Budgets indisponible en eu-central-2)
 │   ├── 01-reseau.yaml            sprints 1-2 : VPC, sous-réseaux 2 AZ, IGW, NAT, tables de routage
 │   ├── 02-securite.yaml          sprint 3 : Security Groups, NACL
 │   ├── 03-pare-feu.yaml          sprint 4 : Network Firewall (liste de domaines), routage d'inspection

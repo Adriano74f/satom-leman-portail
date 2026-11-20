@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 00b Budget, deploye en us-east-1
+  (AWS::Budgets::Budget n'est pas disponible dans CloudFormation en eu-central-2) :
+  150 CHF (165 USD) par mois, alerte a 80 % du reel et a 100 % de la prevision.
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  EmailExploitation:
+    Type: String
+    Default: ''
+  CreerBudget:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  BudgetMontantUsd:
+    Type: Number
+    Default: 165
+    Description: 150 CHF convertis en USD (AWS Budgets facture en USD)
+
+Conditions:
+  AvecBudget: !And [!Equals [!Ref CreerBudget, 'true'], !Not [!Equals [!Ref EmailExploitation, '']]]
+
+Resources:
+  Budget:
+    Type: AWS::Budgets::Budget
+    Condition: AvecBudget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'budget-leman-${Environnement}-${Equipe}'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref BudgetMontantUsd, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref EmailExploitation }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref EmailExploitation }]
+
+Outputs:
+  NomBudget:
+    Condition: AvecBudget
+    Value: !Sub 'budget-leman-${Environnement}-${Equipe}'

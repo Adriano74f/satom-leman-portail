@@ -48,6 +48,7 @@ supprimer_pile "$P-02-securite"       "$REGION"
 supprimer_pile "$P-01-reseau"         "$REGION"
 vider_bucket
 supprimer_pile "$P-00-socle"          "$REGION"
+supprimer_pile "$P-00b-budget"        us-east-1
 
 # Les secrets sont mis en attente de suppression par CloudFormation : on les purge pour pouvoir recreer a l'identique
 for s in vpn1-t1 vpn1-t2 vpn2-t1 vpn2-t2; do

@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Satom Cloud Network - Portail Leman - 00 Socle : cle KMS, bucket des journaux ALB,
-  topic SNS d'exploitation, pre-cles VPN generees dans Secrets Manager, budget.
+  topic SNS d'exploitation, pre-cles VPN generees dans Secrets Manager.
+  Le budget est dans 00b-budget-us-east-1.yaml (AWS::Budgets::Budget n'existe pas en eu-central-2).
 
 Parameters:
   Environnement:
@@ -15,18 +16,9 @@ Parameters:
     Type: String
     Default: ''
     Description: Adresse abonnee au topic SNS et au budget (vide = aucune)
-  CreerBudget:
-    Type: String
-    AllowedValues: ['true', 'false']
-    Default: 'true'
-  BudgetMontantUsd:
-    Type: Number
-    Default: 165
-    Description: 150 CHF convertis en USD (AWS Budgets facture en USD)
 
 Conditions:
   AvecEmail: !Not [!Equals [!Ref EmailExploitation, '']]
-  AvecBudget: !And [!Equals [!Ref CreerBudget, 'true'], !Condition AvecEmail]
 
 Resources:
   # ---------- Chiffrement ----------
@@ -175,22 +167,6 @@ Resources:
         - { Key: Projet, Value: SatomCloudNetwork }
         - { Key: Equipe, Value: !Ref Equipe }
         - { Key: Environnement, Value: !Ref Environnement }
-
-  # ---------- Couts ----------
-  Budget:
-    Type: AWS::Budgets::Budget
-    Condition: AvecBudget
-    Properties:
-      Budget:
-        BudgetName: !Sub 'budget-leman-${Environnement}-${Equipe}'
-        BudgetType: COST
-        TimeUnit: MONTHLY
-        BudgetLimit: { Amount: !Ref BudgetMontantUsd, Unit: USD }
-      NotificationsWithSubscribers:
-        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
-          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref EmailExploitation }]
-        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
-          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref EmailExploitation }]
 
 Outputs:
   CleKmsArn:
