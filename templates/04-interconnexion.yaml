@@ -1,0 +1,460 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 04 Interconnexion (sprints 5 a 8) : VPC de developpement et dev-01,
+  VPC Peering (routes ciblees), Transit Gateway (tables separees), deux VPN site a site IKEv2/BGP
+  avec pre-cles Secrets Manager, passerelle Direct Connect associee a la TGW.
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  PrefixeVpc:
+    Type: String
+    Default: '10.0'
+  PrefixeDev:
+    Type: String
+    Default: '10.1'
+  ModeInterDev:
+    Type: String
+    AllowedValues: [peering, tgw]
+    Default: tgw
+    Description: Chemin prod <-> dev (sprint 5 = peering, sprint 6 = tgw). Les deux ne peuvent pas porter la meme route.
+  ActiverVpn:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  ActiverDx:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  IpSiege:
+    Type: String
+    Default: 203.0.113.10
+  IpAgence:
+    Type: String
+    Default: 198.51.100.20
+  AsnSiege:
+    Type: Number
+    Default: 65010
+  AsnAgence:
+    Type: Number
+    Default: 65020
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  Peering: !Equals [!Ref ModeInterDev, peering]
+  Tgw: !Equals [!Ref ModeInterDev, tgw]
+  Vpn: !Equals [!Ref ActiverVpn, 'true']
+  Dx: !Equals [!Ref ActiverDx, 'true']
+
+Resources:
+  # ================= Sprint 5 : VPC de developpement =================
+  VpcDev:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub '${PrefixeDev}.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: !Sub 'vpc-dev-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  SubDev1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcDev
+      CidrBlock: !Sub '${PrefixeDev}.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub 'sub-dev-1a-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  RtDev:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcDev
+      Tags:
+        - { Key: Name, Value: !Sub 'rt-dev-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  AssocDev1a:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubDev1a, RouteTableId: !Ref RtDev }
+
+  SgDev:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: dev-01 - aucune entree, sortie vers la production uniquement
+      VpcId: !Ref VpcDev
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: !Sub '${PrefixeVpc}.0.0/16', Description: API de production }
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Sub '${PrefixeVpc}.0.0/16', Description: Test de refus vers web-01 }
+        - { IpProtocol: icmp, FromPort: -1, ToPort: -1, CidrIp: !Sub '${PrefixeVpc}.0.0/16', Description: Traceroute }
+      Tags:
+        - { Key: Name, Value: !Sub 'sg-dev-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  ModeleDev:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'lt-dev-leman-${Environnement}-${Equipe}'
+      LaunchTemplateData:
+        MetadataOptions: { HttpTokens: required, HttpEndpoint: enabled }
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeSize: 8, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+  Dev01:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.micro
+      LaunchTemplate: { LaunchTemplateId: !Ref ModeleDev, Version: !GetAtt ModeleDev.LatestVersionNumber }
+      SubnetId: !Ref SubDev1a
+      PrivateIpAddress: !Sub '${PrefixeDev}.1.10'
+      SecurityGroupIds: [!Ref SgDev]
+      Tags:
+        - { Key: Name, Value: !Sub 'dev-01-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  Peering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
+      PeerVpcId: !Ref VpcDev
+      Tags:
+        - { Key: Name, Value: !Sub 'pcx-prod-dev-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  RoutePeeringProdVersDev:
+    Type: AWS::EC2::Route
+    Condition: Peering
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtPrive' }
+      DestinationCidrBlock: !Sub '${PrefixeDev}.0.0/16'
+      VpcPeeringConnectionId: !Ref Peering
+  RoutePeeringDevVersApp:
+    Type: AWS::EC2::Route
+    Condition: Peering
+    Properties:
+      RouteTableId: !Ref RtDev
+      DestinationCidrBlock: !Sub '${PrefixeVpc}.2.0/24'   # route ciblee : sous-reseau de app-01 uniquement
+      VpcPeeringConnectionId: !Ref Peering
+
+  # ================= Sprint 6 : Transit Gateway =================
+  Tgw:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AmazonSideAsn: 64512
+      Description: !Sub 'tgw-leman-${Environnement}-${Equipe}'
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      DnsSupport: enable
+      VpnEcmpSupport: enable
+      Tags:
+        - { Key: Name, Value: !Sub 'tgw-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  AttachProd:
+    Type: AWS::EC2::TransitGatewayVpcAttachment
+    Properties:
+      TransitGatewayId: !Ref Tgw
+      VpcId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
+      SubnetIds:
+        - { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SubPrive1a' }
+        - { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SubPrive1b' }
+      Tags:
+        - { Key: Name, Value: !Sub 'tgwa-prod-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  AttachDev:
+    Type: AWS::EC2::TransitGatewayVpcAttachment
+    Properties:
+      TransitGatewayId: !Ref Tgw
+      VpcId: !Ref VpcDev
+      SubnetIds: [!Ref SubDev1a]
+      Tags:
+        - { Key: Name, Value: !Sub 'tgwa-dev-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  TgwRtProd:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref Tgw
+      Tags:
+        - { Key: Name, Value: !Sub 'tgw-rt-prod-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  TgwRtDev:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref Tgw
+      Tags:
+        - { Key: Name, Value: !Sub 'tgw-rt-dev-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  TgwRtVpn:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref Tgw
+      Tags:
+        - { Key: Name, Value: !Sub 'tgw-rt-vpn-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  AssocTgwProd:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtProd }
+  AssocTgwDev:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties: { TransitGatewayAttachmentId: !Ref AttachDev, TransitGatewayRouteTableId: !Ref TgwRtDev }
+  PropagDevVersProd:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Condition: Tgw
+    Properties: { TransitGatewayAttachmentId: !Ref AttachDev, TransitGatewayRouteTableId: !Ref TgwRtProd }
+  PropagProdVersDev:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Condition: Tgw
+    Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtDev }
+  PropagProdVersVpn:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtVpn }
+
+  RouteTgwProdVersDev:
+    Type: AWS::EC2::Route
+    Condition: Tgw
+    DependsOn: AttachProd
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtPrive' }
+      DestinationCidrBlock: !Sub '${PrefixeDev}.0.0/16'
+      TransitGatewayId: !Ref Tgw
+  RouteTgwDevVersProd:
+    Type: AWS::EC2::Route
+    Condition: Tgw
+    DependsOn: AttachDev
+    Properties:
+      RouteTableId: !Ref RtDev
+      DestinationCidrBlock: !Sub '${PrefixeVpc}.0.0/16'
+      TransitGatewayId: !Ref Tgw
+
+  # ================= Sprint 7 : VPN site a site =================
+  CgwSiege:
+    Type: AWS::EC2::CustomerGateway
+    Condition: Vpn
+    Properties:
+      Type: ipsec.1
+      BgpAsn: !Ref AsnSiege
+      IpAddress: !Ref IpSiege
+      Tags:
+        - { Key: Name, Value: !Sub 'cgw-siege-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  CgwAgence:
+    Type: AWS::EC2::CustomerGateway
+    Condition: Vpn
+    Properties:
+      Type: ipsec.1
+      BgpAsn: !Ref AsnAgence
+      IpAddress: !Ref IpAgence
+      Tags:
+        - { Key: Name, Value: !Sub 'cgw-agence-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  VpnSiege:
+    Type: AWS::EC2::VPNConnection
+    Condition: Vpn
+    Properties:
+      Type: ipsec.1
+      CustomerGatewayId: !Ref CgwSiege
+      TransitGatewayId: !Ref Tgw
+      StaticRoutesOnly: false            # BGP : les prefixes du site sont propages
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: !Join ['', ['{{resolve:secretsmanager:', { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-PskVpn1T1' }, ':SecretString}}']]
+          IKEVersions: [{ Value: ikev2 }]
+        - PreSharedKey: !Join ['', ['{{resolve:secretsmanager:', { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-PskVpn1T2' }, ':SecretString}}']]
+          IKEVersions: [{ Value: ikev2 }]
+      Tags:
+        - { Key: Name, Value: !Sub 'vpn-siege-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  VpnAgence:
+    Type: AWS::EC2::VPNConnection
+    Condition: Vpn
+    Properties:
+      Type: ipsec.1
+      CustomerGatewayId: !Ref CgwAgence
+      TransitGatewayId: !Ref Tgw
+      StaticRoutesOnly: false
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: !Join ['', ['{{resolve:secretsmanager:', { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-PskVpn2T1' }, ':SecretString}}']]
+          IKEVersions: [{ Value: ikev2 }]
+        - PreSharedKey: !Join ['', ['{{resolve:secretsmanager:', { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-PskVpn2T2' }, ':SecretString}}']]
+          IKEVersions: [{ Value: ikev2 }]
+      Tags:
+        - { Key: Name, Value: !Sub 'vpn-agence-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  # CloudFormation ne renvoie pas l'ID d'attachement TGW d'un VPN : petite ressource personnalisee de lecture.
+  RoleLectureAttachements:
+    Type: AWS::IAM::Role
+    Condition: Vpn
+    Properties:
+      RoleName: !Sub 'leman-${Environnement}-${Equipe}-lecture-attach-vpn'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+      Policies:
+        - PolicyName: lecture-attachements-tgw
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: ec2:DescribeTransitGatewayAttachments, Resource: '*' }
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  FonctionAttachementVpn:
+    Type: AWS::Lambda::Function
+    Condition: Vpn
+    Properties:
+      FunctionName: !Sub 'leman-${Environnement}-${Equipe}-attach-vpn'
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 900
+      Role: !GetAtt RoleLectureAttachements.Arn
+      Code:
+        ZipFile: |
+          import time, boto3, cfnresponse
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event.get('PhysicalResourceId'))
+                      return
+                  vpn = event['ResourceProperties']['VpnId']
+                  ec2 = boto3.client('ec2')
+                  for _ in range(40):
+                      res = ec2.describe_transit_gateway_attachments(Filters=[
+                          {'Name': 'resource-id', 'Values': [vpn]},
+                          {'Name': 'resource-type', 'Values': ['vpn']}])['TransitGatewayAttachments']
+                      prets = [a for a in res if a['State'] == 'available']
+                      if prets:
+                          aid = prets[0]['TransitGatewayAttachmentId']
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {'AttachmentId': aid}, aid)
+                          return
+                      time.sleep(20)
+                  raise Exception('Attachement TGW du VPN %s introuvable' % vpn)
+              except Exception as err:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Erreur': str(err)})
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  AttachVpnSiege:
+    Type: Custom::AttachementVpn
+    Condition: Vpn
+    Properties:
+      ServiceToken: !GetAtt FonctionAttachementVpn.Arn
+      VpnId: !Ref VpnSiege
+  AttachVpnAgence:
+    Type: Custom::AttachementVpn
+    Condition: Vpn
+    Properties:
+      ServiceToken: !GetAtt FonctionAttachementVpn.Arn
+      VpnId: !Ref VpnAgence
+
+  AssocTgwVpnSiege:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Condition: Vpn
+    Properties: { TransitGatewayAttachmentId: !GetAtt AttachVpnSiege.AttachmentId, TransitGatewayRouteTableId: !Ref TgwRtVpn }
+  AssocTgwVpnAgence:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Condition: Vpn
+    Properties: { TransitGatewayAttachmentId: !GetAtt AttachVpnAgence.AttachmentId, TransitGatewayRouteTableId: !Ref TgwRtVpn }
+  PropagSiegeVersProd:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Condition: Vpn
+    Properties: { TransitGatewayAttachmentId: !GetAtt AttachVpnSiege.AttachmentId, TransitGatewayRouteTableId: !Ref TgwRtProd }
+  PropagAgenceVersProd:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Condition: Vpn
+    Properties: { TransitGatewayAttachmentId: !GetAtt AttachVpnAgence.AttachmentId, TransitGatewayRouteTableId: !Ref TgwRtProd }
+  RouteProdVersSites:
+    Type: AWS::EC2::Route
+    Condition: Vpn
+    DependsOn: AttachProd
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtPrive' }
+      DestinationCidrBlock: 192.168.0.0/16
+      TransitGatewayId: !Ref Tgw
+
+  # ================= Sprint 8 : Direct Connect (passerelle seule, lien simule) =================
+  DxGw:
+    Type: AWS::DirectConnect::DirectConnectGateway
+    Condition: Dx
+    Properties:
+      DirectConnectGatewayName: !Sub 'dxgw-leman-${Environnement}-${Equipe}'
+      AmazonSideAsn: '64513'
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  AssocDxTgw:
+    Type: AWS::DirectConnect::DirectConnectGatewayAssociation
+    Condition: Dx
+    Properties:
+      DirectConnectGatewayId: !Ref DxGw
+      AssociatedGatewayId: !Ref Tgw
+      AllowedPrefixesToDirectConnectGateway:      # prefixes annonces filtres : jamais 0.0.0.0/0
+        - !Sub '${PrefixeVpc}.0.0/16'
+
+Outputs:
+  TgwId:
+    Value: !Ref Tgw
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-TgwId' }
+  VpcDevId:
+    Value: !Ref VpcDev
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-VpcDevId' }
+  Dev01Id:
+    Value: !Ref Dev01
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-Dev01' }
+  PeeringId:
+    Value: !Ref Peering
+  VpnSiegeId:
+    Condition: Vpn
+    Value: !Ref VpnSiege
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-VpnSiege' }
+  VpnAgenceId:
+    Condition: Vpn
+    Value: !Ref VpnAgence
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-VpnAgence' }
+  DxGwArn:
+    Condition: Dx
+    Value: !Ref DxGw
