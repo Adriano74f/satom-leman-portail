@@ -22,6 +22,11 @@ Parameters:
     AllowedValues: [peering, tgw]
     Default: tgw
     Description: Chemin prod <-> dev (sprint 5 = peering, sprint 6 = tgw). Les deux ne peuvent pas porter la meme route.
+  ActiverVpcDev:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: false si le quota de VPC du compte est atteint (VPC dev, dev-01 et peering desactives)
   ActiverTgw:
     Type: String
     AllowedValues: ['true', 'false']
@@ -53,8 +58,10 @@ Parameters:
 
 Conditions:
   TgwActif: !Equals [!Ref ActiverTgw, 'true']
-  Peering: !Or [!Equals [!Ref ModeInterDev, peering], !Not [!Condition TgwActif]]
-  Tgw: !And [!Equals [!Ref ModeInterDev, tgw], !Condition TgwActif]
+  DevActif: !Equals [!Ref ActiverVpcDev, 'true']
+  DevEtTgw: !And [!Condition DevActif, !Condition TgwActif]
+  Peering: !And [!Condition DevActif, !Or [!Equals [!Ref ModeInterDev, peering], !Not [!Condition TgwActif]]]
+  Tgw: !And [!Equals [!Ref ModeInterDev, tgw], !Condition DevEtTgw]
   Vpn: !And [!Equals [!Ref ActiverVpn, 'true'], !Condition TgwActif]
   Dx: !Equals [!Ref ActiverDx, 'true']
   DxAssocie: !And [!Condition Dx, !Condition TgwActif]
@@ -63,6 +70,7 @@ Resources:
   # ================= Sprint 5 : VPC de developpement =================
   VpcDev:
     Type: AWS::EC2::VPC
+    Condition: DevActif
     Properties:
       CidrBlock: !Sub '${PrefixeDev}.0.0/16'
       EnableDnsSupport: true
@@ -74,6 +82,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   SubDev1a:
     Type: AWS::EC2::Subnet
+    Condition: DevActif
     Properties:
       VpcId: !Ref VpcDev
       CidrBlock: !Sub '${PrefixeDev}.1.0/24'
@@ -86,6 +95,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   RtDev:
     Type: AWS::EC2::RouteTable
+    Condition: DevActif
     Properties:
       VpcId: !Ref VpcDev
       Tags:
@@ -95,10 +105,12 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   AssocDev1a:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: DevActif
     Properties: { SubnetId: !Ref SubDev1a, RouteTableId: !Ref RtDev }
 
   SgDev:
     Type: AWS::EC2::SecurityGroup
+    Condition: DevActif
     Properties:
       GroupDescription: dev-01 - aucune entree, sortie vers la production uniquement
       VpcId: !Ref VpcDev
@@ -114,6 +126,7 @@ Resources:
 
   ModeleDev:
     Type: AWS::EC2::LaunchTemplate
+    Condition: DevActif
     Properties:
       LaunchTemplateName: !Sub 'lt-dev-leman-${Environnement}-${Equipe}'
       LaunchTemplateData:
@@ -123,6 +136,7 @@ Resources:
             Ebs: { VolumeSize: 8, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
   Dev01:
     Type: AWS::EC2::Instance
+    Condition: DevActif
     Properties:
       ImageId: !Ref AmiId
       InstanceType: t3.micro
@@ -138,6 +152,7 @@ Resources:
 
   Peering:
     Type: AWS::EC2::VPCPeeringConnection
+    Condition: DevActif
     Properties:
       VpcId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
       PeerVpcId: !Ref VpcDev
@@ -193,7 +208,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   AttachDev:
     Type: AWS::EC2::TransitGatewayVpcAttachment
-    Condition: TgwActif
+    Condition: DevEtTgw
     Properties:
       TransitGatewayId: !Ref Tgw
       VpcId: !Ref VpcDev
@@ -241,7 +256,7 @@ Resources:
     Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtProd }
   AssocTgwDev:
     Type: AWS::EC2::TransitGatewayRouteTableAssociation
-    Condition: TgwActif
+    Condition: DevEtTgw
     Properties: { TransitGatewayAttachmentId: !Ref AttachDev, TransitGatewayRouteTableId: !Ref TgwRtDev }
   PropagDevVersProd:
     Type: AWS::EC2::TransitGatewayRouteTablePropagation
@@ -473,12 +488,15 @@ Outputs:
     Value: !Ref Tgw
     Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-TgwId' }
   VpcDevId:
+    Condition: DevActif
     Value: !Ref VpcDev
     Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-VpcDevId' }
   Dev01Id:
+    Condition: DevActif
     Value: !Ref Dev01
     Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-Dev01' }
   PeeringId:
+    Condition: DevActif
     Value: !Ref Peering
   VpnSiegeId:
     Condition: Vpn

@@ -38,4 +38,5 @@ Chaque sprint livre un template, un contrôle de sécurité, une mesure et une p
 | 20/11 | `TransitGateway limit exceeded` et CGW `already exists` | Ancienne TGW du module 6 supprimée (quota de 5) ; ASN BGP des sites propres à l'équipe (65451/65452 en dev) car une CGW identique (IP + ASN du cours) existait déjà sur le compte |
 | 20/11 | Pile 04 bloquée 1 h (ressource personnalisée) | Journaux Lambda : `No module named 'cfnresponse'` ; réponse à CloudFormation réécrite avec urllib, `ServiceTimeout` 900 s pour ne plus attendre 1 h |
 | 20/11 | Quota de 5 Transit Gateway atteint par les autres équipes | Paramètre `ActiverTgw` : en dev, chemin dev ↔ prod par peering, VPN et association DX désactivés (écart documenté) ; templates prêts pour un compte disposant du quota |
+| 20/11 | Quota de 40 VPC atteint à nouveau par les autres équipes | Paramètre `ActiverVpcDev` : VPC dev, dev-01 et peering désactivés en dev (écart), réactivables par change set dès qu'un VPC se libère |
 | 20/11 | Recréation à l'identique | `supprimer.sh` vide le bucket versionné et purge les secrets en attente de suppression |

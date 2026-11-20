@@ -5,6 +5,7 @@
   "PrefixeDev": "10.21",
   "ZoneNat": "2",
   "ModeInterDev": "peering",
+  "ActiverVpcDev": "false",
   "ActiverTgw": "false",
   "ActiverPareFeu": "true",
   "ActiverVpn": "false",

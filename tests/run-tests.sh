@@ -118,8 +118,12 @@ fi
 section "Chemins reseau - VPC Reachability Analyzer (sprints 3, 5, 6)"
 R="$(analyse "$WEB" "$APP" 8080)"; ligne 3 "web-01 -> app-01:8080" "accessible" "${R%%;*}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
 R="$(analyse "$WEB" "$APP" 22)";   ligne 3 "web-01 -> app-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
-R="$(analyse "$DEV" "$APP" 8080)"; ligne 5 "dev-01 -> app-01:8080 (chemin)" "accessible (pcx- ou tgw-)" "${R%%;*} ${R#*;}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
-R="$(analyse "$DEV" "$WEB" 22)";   ligne 5 "dev-01 -> web-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
+if [ -n "$DEV" ] && [ "$DEV" != None ]; then
+  R="$(analyse "$DEV" "$APP" 8080)"; ligne 5 "dev-01 -> app-01:8080 (chemin)" "accessible (pcx- ou tgw-)" "${R%%;*} ${R#*;}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
+  R="$(analyse "$DEV" "$WEB" 22)";   ligne 5 "dev-01 -> web-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
+else
+  ligne 5 "dev-01 -> app-01:8080 / web-01:22" "chemins mesures" "VPC dev non deploye (quota de VPC du compte)" ECART
+fi
 
 # ======================= Sprints 7 et 8 : VPN et Direct Connect =======================
 section "VPN et Direct Connect (sprints 7-8)"
