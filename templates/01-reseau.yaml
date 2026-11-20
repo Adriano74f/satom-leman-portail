@@ -16,6 +16,11 @@ Parameters:
     Default: '10.0'
     AllowedPattern: '^10\.\d{1,3}$'
     Description: Deux premiers octets du VPC de production (10.0 => 10.0.0.0/16)
+  ZoneNat:
+    Type: Number
+    Default: 0
+    AllowedValues: [0, 1, 2]
+    Description: Index de la zone du sous-reseau NAT (quota de 5 NAT Gateway par zone sur le compte partage)
 
 Resources:
   Vpc:
@@ -60,7 +65,7 @@ Resources:
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: !Sub '${PrefixeVpc}.3.0/24'
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [!Ref ZoneNat, !GetAZs '']
       MapPublicIpOnLaunch: false
       Tags:
         - { Key: Name, Value: !Sub 'sub-nat-1a-${Environnement}-${Equipe}' }

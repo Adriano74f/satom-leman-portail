@@ -3,6 +3,7 @@
   "Equipe": "af",
   "PrefixeVpc": "10.20",
   "PrefixeDev": "10.21",
+  "ZoneNat": "2",
   "ModeInterDev": "tgw",
   "ActiverPareFeu": "true",
   "ActiverVpn": "true",
