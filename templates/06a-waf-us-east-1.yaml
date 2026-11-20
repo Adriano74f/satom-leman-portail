@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 06a WAF (sprint 11), deploye en us-east-1 (obligatoire pour CloudFront) :
+  regles gerees AWS et limitation de debit par IP.
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  LimiteRequetes:
+    Type: Number
+    Default: 2000
+    Description: Requetes maximum par IP sur 5 minutes
+
+Resources:
+  AclWeb:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub 'waf-leman-${Environnement}-${Equipe}'
+      Scope: CLOUDFRONT
+      DefaultAction: { Allow: {} }
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub 'waf-leman-${Environnement}-${Equipe}'
+      Rules:
+        - Name: regles-communes-aws
+          Priority: 1
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesCommonRuleSet }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: regles-communes }
+        - Name: entrees-malveillantes
+          Priority: 2
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesKnownBadInputsRuleSet }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: entrees-malveillantes }
+        - Name: limitation-debit
+          Priority: 3
+          Action: { Block: {} }
+          Statement:
+            RateBasedStatement: { Limit: !Ref LimiteRequetes, AggregateKeyType: IP }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: limitation-debit }
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+Outputs:
+  AclWebArn:
+    Value: !GetAtt AclWeb.Arn
