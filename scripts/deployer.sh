@@ -70,17 +70,28 @@ sortie() { # sortie <pile> <region> <cle>
     --query "Stacks[0].Outputs[?OutputKey=='$3'].OutputValue | [0]" --output text
 }
 
+# Piles globales (us-east-1) : le compte de formation peut les interdire par une SCP.
+# Elles sont alors signalees comme ECART et le portail est deploye sans elles.
+ECARTS=()
+deployer_pile_globale() {
+  if deployer_pile "$@"; then return 0; fi
+  journal "ECART : pile $1 refusee en $3 (politique du compte), deploiement poursuivi sans elle"
+  ECARTS+=("$1")
+  return 0
+}
+
 prerequis
 P="stack-leman-$ENV"
 deployer_pile "$P-00-socle"         "$RACINE/templates/00-socle.yaml"          "$REGION"
-deployer_pile "$P-00b-budget"       "$RACINE/templates/00b-budget-us-east-1.yaml" "us-east-1"
+deployer_pile_globale "$P-00b-budget" "$RACINE/templates/00b-budget-us-east-1.yaml" "us-east-1"
 deployer_pile "$P-01-reseau"        "$RACINE/templates/01-reseau.yaml"         "$REGION"
 deployer_pile "$P-02-securite"      "$RACINE/templates/02-securite.yaml"       "$REGION"
 deployer_pile "$P-03-pare-feu"      "$RACINE/templates/03-pare-feu.yaml"       "$REGION"
 deployer_pile "$P-04-interconnexion" "$RACINE/templates/04-interconnexion.yaml" "$REGION"
 deployer_pile "$P-05-calcul"        "$RACINE/templates/05-calcul.yaml"         "$REGION"
-deployer_pile "$P-06a-waf"          "$RACINE/templates/06a-waf-us-east-1.yaml" "us-east-1"
-VAL[AclWebArn]="$(sortie "$P-06a-waf" us-east-1 AclWebArn)"
+deployer_pile_globale "$P-06a-waf"   "$RACINE/templates/06a-waf-us-east-1.yaml" "us-east-1"
+VAL[AclWebArn]="$(sortie "$P-06a-waf" us-east-1 AclWebArn 2>/dev/null || true)"
+[ "${VAL[AclWebArn]}" = "None" ] && VAL[AclWebArn]=""
 deployer_pile "$P-06-edge-dns"      "$RACINE/templates/06-edge-dns.yaml"       "$REGION"
 deployer_pile "$P-07-supervision"   "$RACINE/templates/07-supervision.yaml"    "$REGION"
 
@@ -88,3 +99,5 @@ journal "Portail $ENV deploye"
 echo "ALB        : https://$(sortie "$P-05-calcul" "$REGION" AlbDns)"
 echo "CloudFront : https://$(sortie "$P-06-edge-dns" "$REGION" DomaineCloudFront)"
 echo "DNS public : $(sortie "$P-06-edge-dns" "$REGION" ServeursNoms)"
+[ ${#ECARTS[@]} -gt 0 ] && echo "Ecarts     : ${ECARTS[*]} (voir docs/rapport.md)"
+exit 0
