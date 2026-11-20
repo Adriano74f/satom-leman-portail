@@ -94,7 +94,11 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { 'token.actions.githubusercontent.com:aud': sts.amazonaws.com }
-              StringLike: { 'token.actions.githubusercontent.com:sub': !Sub 'repo:${ProprietaireGitHub}/${DepotGitHub}:*' }
+              StringLike:
+                'token.actions.githubusercontent.com:sub':
+                  - !Sub 'repo:${ProprietaireGitHub}/${DepotGitHub}:*'
+                  # format avec identifiants immuables (repo:<compte>@<id>/<depot>@<id>:...)
+                  - !Sub 'repo:${ProprietaireGitHub}@*/${DepotGitHub}@*:*'
       Policies:
         - PolicyName: deploiement-via-cloudformation
           PolicyDocument:
