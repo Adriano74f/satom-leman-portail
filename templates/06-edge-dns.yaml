@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 06 Edge et DNS (sprints 10 et 11) : distribution CloudFront
+  (/static/* en cache, /api/* jamais), metriques additionnelles (CacheHitRate), WAF, zone publique avec
+  controle de sante et basculement, zone privee associee au VPC de production, DNSSEC optionnel.
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  PrefixeVpc:
+    Type: String
+    Default: '10.0'
+  NomDomaine:
+    Type: String
+    Default: leman-finance.example
+  IpSecours:
+    Type: String
+    Default: 203.0.113.50
+    Description: Page de maintenance servie par l'enregistrement secondaire
+  AclWebArn:
+    Type: String
+    Default: ''
+    Description: ACL WAF (us-east-1) issue de 06a, vide = sans WAF
+  CertificatCloudFrontArn:
+    Type: String
+    Default: ''
+    Description: Certificat ACM us-east-1 du domaine (vide = certificat *.cloudfront.net, domaine .example non validable)
+  CleKskKmsArn:
+    Type: String
+    Default: ''
+    Description: Cle KMS asymetrique ECC_NIST_P256 en us-east-1 pour DNSSEC (vide = DNSSEC non active)
+
+Conditions:
+  AvecWaf: !Not [!Equals [!Ref AclWebArn, '']]
+  AvecCertificat: !Not [!Equals [!Ref CertificatCloudFrontArn, '']]
+  AvecDnssec: !Not [!Equals [!Ref CleKskKmsArn, '']]
+
+Resources:
+  # ================= Sprint 11 : CloudFront =================
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub 'd-leman-portail-${Environnement}-${Equipe}'
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Aliases: !If [AvecCertificat, [!Sub 'portefeuilles.${NomDomaine}'], !Ref 'AWS::NoValue']
+        ViewerCertificate: !If
+          - AvecCertificat
+          - { AcmCertificateArn: !Ref CertificatCloudFrontArn, SslSupportMethod: sni-only, MinimumProtocolVersion: TLSv1.2_2021 }
+          - { CloudFrontDefaultCertificate: true }
+        WebACLId: !If [AvecWaf, !Ref AclWebArn, !Ref 'AWS::NoValue']
+        Origins:
+          - Id: alb
+            DomainName: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-AlbDns' }
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only      # certificat ALB auto-signe : refuse par CloudFront en HTTPS
+              HTTPPort: 80
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: alb
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+        CacheBehaviors:
+          - PathPattern: /static/*
+            TargetOriginId: alb
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6        # CachingOptimized (TTL 86 400 s)
+            AllowedMethods: [GET, HEAD]
+            Compress: true
+          - PathPattern: /api/*
+            TargetOriginId: alb
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # CachingDisabled
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3 # AllViewer (cookies, Authorization)
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD]
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  MetriquesAdditionnelles:
+    Type: AWS::CloudFront::MonitoringSubscription
+    Properties:
+      DistributionId: !Ref Distribution
+      MonitoringSubscription:
+        RealtimeMetricsSubscriptionConfig: { RealtimeMetricsSubscriptionStatus: Enabled }
+
+  # ================= Sprint 10 : Route 53 =================
+  ZonePublique:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref NomDomaine
+      HostedZoneConfig: { Comment: !Sub 'Zone publique Leman ${Environnement}-${Equipe}' }
+      HostedZoneTags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  ControleSante:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS
+        FullyQualifiedDomainName: !GetAtt Distribution.DomainName
+        ResourcePath: /health
+        Port: 443
+        RequestInterval: 10
+        FailureThreshold: 2
+      HealthCheckTags:
+        - { Key: Name, Value: !Sub 'hc-portefeuilles-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  PortefeuillesPrincipal:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ZonePublique
+      Name: !Sub 'portefeuilles.${NomDomaine}'
+      Type: A
+      SetIdentifier: principal
+      Failover: PRIMARY
+      HealthCheckId: !Ref ControleSante
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2              # zone hebergee fixe de CloudFront
+        EvaluateTargetHealth: false
+  PortefeuillesSecours:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ZonePublique
+      Name: !Sub 'portefeuilles.${NomDomaine}'
+      Type: A
+      SetIdentifier: secours
+      Failover: SECONDARY
+      TTL: '60'
+      ResourceRecords: [!Ref IpSecours]
+
+  CleSignature:
+    Type: AWS::Route53::KeySigningKey
+    Condition: AvecDnssec
+    Properties:
+      HostedZoneId: !Ref ZonePublique
+      Name: !Sub 'ksk${Environnement}${Equipe}'
+      KeyManagementServiceArn: !Ref CleKskKmsArn
+      Status: ACTIVE
+  Dnssec:
+    Type: AWS::Route53::DNSSEC
+    Condition: AvecDnssec
+    DependsOn: CleSignature
+    Properties:
+      HostedZoneId: !Ref ZonePublique
+
+  ZonePrivee:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Sub '${Environnement}.leman.internal'
+      HostedZoneConfig: { Comment: !Sub 'Zone privee Leman ${Environnement}-${Equipe}' }
+      VPCs:
+        - VPCId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
+          VPCRegion: !Ref 'AWS::Region'
+      HostedZoneTags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  EnregistrementWeb:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ZonePrivee
+      Name: !Sub 'web.${Environnement}.leman.internal'
+      Type: A
+      TTL: '300'
+      ResourceRecords: [!Sub '${PrefixeVpc}.1.10']
+  EnregistrementApp:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ZonePrivee
+      Name: !Sub 'app.${Environnement}.leman.internal'
+      Type: A
+      TTL: '300'
+      ResourceRecords: [!Sub '${PrefixeVpc}.2.10']
+
+Outputs:
+  DomaineCloudFront:
+    Value: !GetAtt Distribution.DomainName
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-DomaineCloudFront' }
+  DistributionId:
+    Value: !Ref Distribution
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-DistributionId' }
+  ZonePubliqueId:
+    Value: !Ref ZonePublique
+  ServeursNoms:
+    Value: !Join [',', !GetAtt ZonePublique.NameServers]
+  ZonePriveeId:
+    Value: !Ref ZonePrivee
+  ControleSanteId:
+    Value: !Ref ControleSante
