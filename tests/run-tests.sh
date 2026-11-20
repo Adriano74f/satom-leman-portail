@@ -85,7 +85,7 @@ analyse() { # analyse <source> <destination> <port> -> "trouve|non;composants"
            --query 'NetworkInsightsAnalyses[0]' --output json)"
     [ "$(echo "$res" | jq -r .Status)" = "succeeded" ] && break
   done
-  echo "$(echo "$res" | jq -r 'if .NetworkPathFound then "trouve" else "non" end');$(echo "$res" | jq -r '[.ForwardPathComponents[]?.Component.Id] | map(select(test("^(tgw|pcx)"))) | unique | join(" ")')"
+  echo "$(echo "$res" | jq -r 'if .Status != "succeeded" then "indetermine" elif .NetworkPathFound then "trouve" else "non" end');$(echo "$res" | jq -r '[.ForwardPathComponents[]?.Component.Id] | map(select(test("^(tgw|pcx)"))) | unique | join(" ")')"
   aws ec2 delete-network-insights-analysis --region "$REGION" --network-insights-analysis-id "$an" >/dev/null 2>&1
   aws ec2 delete-network-insights-path --region "$REGION" --network-insights-path-id "$chemin" >/dev/null 2>&1
 }
@@ -120,11 +120,13 @@ fi
 
 # ======================= Sprints 3, 5, 6 : Reachability Analyzer =======================
 section "Chemins reseau - VPC Reachability Analyzer (sprints 3, 5, 6)"
-R="$(analyse "$WEB" "$APP" 8080)"; ligne 3 "web-01 -> app-01:8080" "accessible" "${R%%;*}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
-R="$(analyse "$WEB" "$APP" 22)";   ligne 3 "web-01 -> app-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
+verdict() { # verdict <obtenu> <attendu>
+  case "$1" in indetermine|erreur) echo ECART;; "$2") echo OK;; *) echo KO;; esac; }
+R="$(analyse "$WEB" "$APP" 8080)"; ligne 3 "web-01 -> app-01:8080" "accessible" "${R%%;*}" "$(verdict "${R%%;*}" trouve)"
+R="$(analyse "$WEB" "$APP" 22)";   ligne 3 "web-01 -> app-01:22" "bloque" "${R%%;*}" "$(verdict "${R%%;*}" non)"
 if [ -n "$DEV" ] && [ "$DEV" != None ]; then
-  R="$(analyse "$DEV" "$APP" 8080)"; ligne 5 "dev-01 -> app-01:8080 (chemin)" "accessible (pcx- ou tgw-)" "${R%%;*} ${R#*;}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
-  R="$(analyse "$DEV" "$WEB" 22)";   ligne 5 "dev-01 -> web-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
+  R="$(analyse "$DEV" "$APP" 8080)"; ligne 5 "dev-01 -> app-01:8080 (chemin)" "accessible (pcx- ou tgw-)" "${R%%;*} ${R#*;}" "$(verdict "${R%%;*}" trouve)"
+  R="$(analyse "$DEV" "$WEB" 22)";   ligne 5 "dev-01 -> web-01:22" "bloque" "${R%%;*}" "$(verdict "${R%%;*}" non)"
 else
   ligne 5 "dev-01 -> app-01:8080 / web-01:22" "chemins mesures" "VPC dev non deploye (quota de VPC du compte)" ECART
 fi
