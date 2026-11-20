@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 03 Pare-feu (sprint 4) : AWS Network Firewall dans sub-fw-1a,
+  politique stateful a liste de domaines autorises, journaux ALERT et FLOW chiffres KMS,
+  et route par defaut des sous-reseaux prives (prive -> pare-feu -> NAT -> IGW, retour symetrique).
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  PrefixeVpc:
+    Type: String
+    Default: '10.0'
+  ActiverPareFeu:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: false = sortie directe par la NAT (economie), true = inspection par le pare-feu
+  DomainesAutorises:
+    Type: CommaDelimitedList
+    Default: '.amazonaws.com,.amazonlinux.com,.amazon.com'
+    Description: Domaines joignables depuis les sous-reseaux prives (TLS SNI / HTTP Host)
+  RetentionJours:
+    Type: Number
+    Default: 7
+
+Conditions:
+  PareFeu: !Equals [!Ref ActiverPareFeu, 'true']
+  SansPareFeu: !Not [!Condition PareFeu]
+
+Resources:
+  JournalAlertes:
+    Type: AWS::Logs::LogGroup
+    Condition: PareFeu
+    Properties:
+      LogGroupName: !Sub '/leman/${Environnement}-${Equipe}/pare-feu/alertes'
+      RetentionInDays: !Ref RetentionJours
+      KmsKeyId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-CleKmsArn' }
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  JournalFlux:
+    Type: AWS::Logs::LogGroup
+    Condition: PareFeu
+    Properties:
+      LogGroupName: !Sub '/leman/${Environnement}-${Equipe}/pare-feu/flux'
+      RetentionInDays: !Ref RetentionJours
+      KmsKeyId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-CleKmsArn' }
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  GroupeReglesDomaines:
+    Type: AWS::NetworkFirewall::RuleGroup
+    Condition: PareFeu
+    Properties:
+      RuleGroupName: !Sub 'rg-domaines-leman-${Environnement}-${Equipe}'
+      Type: STATEFUL
+      Capacity: 100
+      Description: Sortie limitee aux domaines autorises, tout autre domaine HTTP ou TLS est refuse
+      RuleGroup:
+        RuleVariables:
+          IPSets:
+            HOME_NET:
+              Definition: [!Sub '${PrefixeVpc}.0.0/16']
+        RulesSource:
+          RulesSourceList:
+            GeneratedRulesType: ALLOWLIST
+            TargetTypes: [TLS_SNI, HTTP_HOST]
+            Targets: !Ref DomainesAutorises
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  PolitiquePareFeu:
+    Type: AWS::NetworkFirewall::FirewallPolicy
+    Condition: PareFeu
+    Properties:
+      FirewallPolicyName: !Sub 'pol-leman-${Environnement}-${Equipe}'
+      FirewallPolicy:
+        StatelessDefaultActions: ['aws:forward_to_sfe']
+        StatelessFragmentDefaultActions: ['aws:forward_to_sfe']
+        StatefulRuleGroupReferences:
+          - ResourceArn: !Ref GroupeReglesDomaines
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  PareFeu:
+    Type: AWS::NetworkFirewall::Firewall
+    Condition: PareFeu
+    Properties:
+      FirewallName: !Sub 'nfw-leman-${Environnement}-${Equipe}'
+      FirewallPolicyArn: !Ref PolitiquePareFeu
+      VpcId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
+      SubnetMappings:
+        - SubnetId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SubFw1a' }
+      DeleteProtection: false
+      Tags:
+        - { Key: Name, Value: !Sub 'nfw-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  JournalisationPareFeu:
+    Type: AWS::NetworkFirewall::LoggingConfiguration
+    Condition: PareFeu
+    Properties:
+      FirewallArn: !Ref PareFeu
+      LoggingConfiguration:
+        LogDestinationConfigs:
+          - LogType: ALERT
+            LogDestinationType: CloudWatchLogs
+            LogDestination: { logGroup: !Ref JournalAlertes }
+          - LogType: FLOW
+            LogDestinationType: CloudWatchLogs
+            LogDestination: { logGroup: !Ref JournalFlux }
+
+  # ---------- Routage via le pare-feu ----------
+  RoutePriveeVersPareFeu:
+    Type: AWS::EC2::Route
+    Condition: PareFeu
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtPrive' }
+      DestinationCidrBlock: 0.0.0.0/0
+      VpcEndpointId: !Select [1, !Split [':', !Select [0, !GetAtt PareFeu.EndpointIds]]]
+  RoutePareFeuVersNat:
+    Type: AWS::EC2::Route
+    Condition: PareFeu
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtFw' }
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-NatGw' }
+  RouteRetourPrive1a:
+    Type: AWS::EC2::Route
+    Condition: PareFeu
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtNat' }
+      DestinationCidrBlock: !Sub '${PrefixeVpc}.2.0/24'
+      VpcEndpointId: !Select [1, !Split [':', !Select [0, !GetAtt PareFeu.EndpointIds]]]
+  RouteRetourPrive1b:
+    Type: AWS::EC2::Route
+    Condition: PareFeu
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtNat' }
+      DestinationCidrBlock: !Sub '${PrefixeVpc}.6.0/24'
+      VpcEndpointId: !Select [1, !Split [':', !Select [0, !GetAtt PareFeu.EndpointIds]]]
+
+  # ---------- Sans pare-feu : sortie directe par la NAT ----------
+  RoutePriveeVersNat:
+    Type: AWS::EC2::Route
+    Condition: SansPareFeu
+    Properties:
+      RouteTableId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-RtPrive' }
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-NatGw' }
+
+Outputs:
+  NomPareFeu:
+    Condition: PareFeu
+    Value: !Sub 'nfw-leman-${Environnement}-${Equipe}'
+  JournalAlertes:
+    Condition: PareFeu
+    Value: !Ref JournalAlertes
+    Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-JournalPareFeu' }
