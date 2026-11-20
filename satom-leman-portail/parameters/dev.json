@@ -1,0 +1,18 @@
+{
+  "Environnement": "dev",
+  "Equipe": "af",
+  "PrefixeVpc": "10.20",
+  "PrefixeDev": "10.21",
+  "ModeInterDev": "tgw",
+  "ActiverPareFeu": "true",
+  "ActiverVpn": "true",
+  "ActiverDx": "true",
+  "TypeInstance": "t3.micro",
+  "CreerBudget": "true",
+  "BudgetMontantUsd": "165",
+  "NomDomaine": "leman-finance.example",
+  "CreerGuardDuty": "false",
+  "CreerSecurityHub": "false",
+  "CreerReglesConfig": "false",
+  "RetentionJours": "7"
+}

@@ -1,0 +1,162 @@
+name: pipeline-devsecops
+
+# 1. Lint  ->  2. Securite statique (+ secrets)  ->  3. Deploiement dev (change sets)  ->  4. Tests  ->  5. Prod (approbation)
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Action a executer
+        type: choice
+        options: [deployer, recreer-dev, supprimer-dev, supprimer-prod]
+        default: deployer
+
+permissions:
+  id-token: write        # federation OIDC vers AWS, aucune cle d'acces stockee
+  contents: read
+  pull-requests: read
+
+env:
+  AWS_REGION: eu-central-2
+
+concurrency:
+  group: portail-leman-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------ 1
+  lint:
+    name: 1 - Lint (cfn-lint, shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Installer cfn-lint
+        run: pip install --quiet cfn-lint
+      - name: cfn-lint sur chaque template (une erreur bloque la PR)
+        run: cfn-lint --non-zero-exit-code error templates/*.yaml bootstrap/*.yaml
+      - name: shellcheck des scripts
+        run: shellcheck -S error scripts/*.sh tests/*.sh
+
+  # ------------------------------------------------------------------ 2
+  securite:
+    name: 2 - Securite statique (cfn-guard, checkov, gitleaks)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Installer cfn-guard
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/aws-cloudformation/cloudformation-guard/main/install-guard.sh | sh
+          echo "$HOME/.guard/bin" >> "$GITHUB_PATH"
+      - name: cfn-guard (politiques du depot, bloquant)
+        run: cfn-guard validate --data templates --rules policies/securite.guard --show-summary all
+      - name: checkov (rapport SARIF)
+        run: |
+          pip install --quiet checkov
+          checkov --config-file .checkov.yaml -o cli -o sarif --output-file-path console,checkov.sarif
+      - name: Detection de secrets (gitleaks, bloquant)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: rapport-checkov, path: checkov.sarif, if-no-files-found: ignore }
+
+  # ------------------------------------------------------------------ 3
+  deploiement-dev:
+    name: 3 - Deploiement dev (change sets)
+    runs-on: ubuntu-latest
+    needs: securite
+    if: >-
+      github.event_name != 'pull_request' && vars.AWS_ROLE_ARN != '' &&
+      (github.event_name == 'push' || inputs.action == 'deployer' || inputs.action == 'recreer-dev')
+    environment: dev
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - name: Suppression prealable (recreation a l'identique)
+        if: inputs.action == 'recreer-dev'
+        run: bash scripts/supprimer.sh dev
+      - name: Deploiement de stack-leman-dev-*
+        env:
+          AWS_CFN_ROLE_ARN: ${{ vars.AWS_CFN_ROLE_ARN }}
+          EMAIL_EXPLOITATION: ${{ vars.EMAIL_EXPLOITATION }}
+        run: |
+          START=$(date +%s)
+          bash scripts/deployer.sh dev | tee deploiement-dev.log
+          echo "Duree totale : $(( $(date +%s) - START )) s" | tee -a deploiement-dev.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: deploiement-dev, path: deploiement-dev.log }
+
+  # ------------------------------------------------------------------ 4
+  tests-dev:
+    name: 4 - Tests (connectivite, sante, performance, alerte)
+    runs-on: ubuntu-latest
+    needs: deploiement-dev
+    environment: dev
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Tests et preuves
+        run: RAPPORT=preuves/tests-dev.md bash tests/run-tests.sh dev
+      - name: Publier le resume
+        if: always()
+        run: cat preuves/tests-dev.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: preuves-tests-dev, path: preuves/ }
+
+  # ------------------------------------------------------------------ 5
+  deploiement-prod:
+    name: 5 - Deploiement prod (validation manuelle)
+    runs-on: ubuntu-latest
+    needs: tests-dev
+    environment: prod        # regle de protection GitHub : un relecteur doit approuver
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - name: Deploiement de stack-leman-prod-*
+        env:
+          AWS_CFN_ROLE_ARN: ${{ vars.AWS_CFN_ROLE_ARN }}
+          EMAIL_EXPLOITATION: ${{ vars.EMAIL_EXPLOITATION }}
+        run: bash scripts/deployer.sh prod
+
+  # ------------------------------------------------------------------ nettoyage
+  suppression:
+    name: Suppression d'un environnement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.action, 'supprimer-')
+    environment: ${{ inputs.action == 'supprimer-prod' && 'prod' || 'dev' }}
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+      - run: bash scripts/supprimer.sh "${INPUT_ACTION#supprimer-}"
+        env:
+          INPUT_ACTION: ${{ inputs.action }}
+          AWS_CFN_ROLE_ARN: ${{ vars.AWS_CFN_ROLE_ARN }}

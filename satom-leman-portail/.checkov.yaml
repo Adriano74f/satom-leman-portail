@@ -1,0 +1,14 @@
+# Analyse statique complementaire (rapport SARIF publie par la pipeline).
+# Les controles bloquants sont dans policies/securite.guard ; checkov sert d'avis externe.
+framework:
+  - cloudformation
+directory:
+  - templates
+soft-fail: true
+compact: true
+skip-check:
+  - CKV_AWS_116   # Lambda sans DLQ : ressource personnalisee de lecture, executee une fois par deploiement
+  - CKV_AWS_117   # Lambda hors VPC : appelle uniquement l'API EC2
+  - CKV_AWS_173   # Variables d'environnement Lambda : aucune
+  - CKV_AWS_115   # Concurrence Lambda : non pertinente pour une ressource personnalisee
+  - CKV_AWS_2     # Ecouteur HTTP : origine CloudFront, reservee a la liste de prefixes CloudFront

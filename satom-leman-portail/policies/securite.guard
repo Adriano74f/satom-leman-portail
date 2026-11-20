@@ -1,0 +1,108 @@
+# =====================================================================
+#  Politiques de securite du portail Leman (AWS CloudFormation Guard)
+#  Executees par la pipeline sur chaque pull request : un echec bloque la fusion.
+# =====================================================================
+
+# --- 1. Aucun port d'administration (22, 3389) ni "tous protocoles" ouvert a Internet ---
+let groupes = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+rule sg_aucun_port_administration_public when %groupes !empty {
+  %groupes {
+    when Properties.SecurityGroupIngress exists {
+      Properties.SecurityGroupIngress[*] {
+        when CidrIp exists {
+          when CidrIp == '0.0.0.0/0' {
+            IpProtocol != '-1'
+            FromPort > 22 or ToPort < 22
+            FromPort > 3389 or ToPort < 3389
+          }
+        }
+      }
+    }
+  }
+}
+
+let entrees = Resources.*[ Type == 'AWS::EC2::SecurityGroupIngress' ]
+rule regles_entree_aucun_port_administration_public when %entrees !empty {
+  %entrees.Properties {
+    when CidrIp exists {
+      when CidrIp == '0.0.0.0/0' {
+        IpProtocol != '-1'
+        FromPort > 22 or ToPort < 22
+      }
+    }
+  }
+}
+
+# --- 2. Chiffrement obligatoire ---
+let modeles = Resources.*[ Type == 'AWS::EC2::LaunchTemplate' ]
+rule volumes_ebs_chiffres when %modeles !empty {
+  %modeles.Properties.LaunchTemplateData.BlockDeviceMappings[*].Ebs.Encrypted == true
+}
+
+let journaux = Resources.*[ Type == 'AWS::Logs::LogGroup' ]
+rule journaux_chiffres_kms when %journaux !empty {
+  %journaux.Properties.KmsKeyId exists
+}
+
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule buckets_chiffres_et_prives when %buckets !empty {
+  %buckets.Properties.BucketEncryption exists
+  %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+  %buckets.Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+}
+
+let sujets = Resources.*[ Type == 'AWS::SNS::Topic' ]
+rule sujets_sns_chiffres when %sujets !empty {
+  %sujets.Properties.KmsMasterKeyId exists
+}
+
+let ecouteurs_https = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::Listener'
+                                   Properties.Protocol == 'HTTPS' ]
+rule alb_tls_12_minimum when %ecouteurs_https !empty {
+  %ecouteurs_https.Properties.SslPolicy in ['ELBSecurityPolicy-TLS13-1-2-2021-06',
+                                           'ELBSecurityPolicy-TLS13-1-2-Res-2021-06',
+                                           'ELBSecurityPolicy-TLS-1-2-2017-01',
+                                           'ELBSecurityPolicy-TLS-1-2-Ext-2018-06']
+}
+
+let albs = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::LoadBalancer' ]
+rule alb_journaux_acces_actives when %albs !empty {
+  %albs.Properties.LoadBalancerAttributes[ Key == 'access_logs.s3.enabled' ].Value == 'true'
+}
+
+# --- 3. Tags obligatoires sur les ressources principales ---
+let etiquetables = Resources.*[ Type in ['AWS::EC2::VPC', 'AWS::EC2::Subnet', 'AWS::EC2::SecurityGroup',
+                                        'AWS::EC2::Instance', 'AWS::EC2::NatGateway', 'AWS::EC2::RouteTable',
+                                        'AWS::EC2::TransitGateway', 'AWS::EC2::VPNConnection',
+                                        'AWS::ElasticLoadBalancingV2::LoadBalancer', 'AWS::NetworkFirewall::Firewall'] ]
+rule tags_obligatoires when %etiquetables !empty {
+  %etiquetables {
+    Properties.Tags[ Key == 'Projet' ] !empty
+    Properties.Tags[ Key == 'Equipe' ] !empty
+    Properties.Tags[ Key == 'Environnement' ] !empty
+  }
+}
+
+# --- 4. Routage : seules les tables publiques (ALB, NAT) sortent par l'Internet Gateway ---
+let routes_igw = Resources.*[ Type == 'AWS::EC2::Route'
+                              Properties.GatewayId exists ]
+rule prive_jamais_vers_igw when %routes_igw !empty {
+  %routes_igw.Properties.RouteTableId.Ref in ['RtPublic', 'RtNat']
+}
+
+# --- 5. Direct Connect : aucune route par defaut annoncee ---
+let assoc_dx = Resources.*[ Type == 'AWS::DirectConnect::DirectConnectGatewayAssociation' ]
+rule dx_sans_route_par_defaut when %assoc_dx !empty {
+  %assoc_dx.Properties.AllowedPrefixesToDirectConnectGateway[*] != '0.0.0.0/0'
+}
+
+# --- 6. Aucun secret en clair : les pre-cles VPN sont des references Secrets Manager ---
+let vpns = Resources.*[ Type == 'AWS::EC2::VPNConnection' ]
+rule precles_vpn_hors_template when %vpns !empty {
+  %vpns.Properties.VpnTunnelOptionsSpecifications[*].PreSharedKey is_struct
+}
+
+# --- 7. IMDSv2 obligatoire sur les instances ---
+rule imdsv2_obligatoire when %modeles !empty {
+  %modeles.Properties.LaunchTemplateData.MetadataOptions.HttpTokens == 'required'
+}

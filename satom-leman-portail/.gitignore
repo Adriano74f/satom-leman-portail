@@ -1,0 +1,7 @@
+*.pem
+*.key
+*.p12
+.env
+.aws/
+checkov.sarif
+__pycache__/
