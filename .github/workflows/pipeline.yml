@@ -20,7 +20,7 @@ permissions:
   pull-requests: read
 
 env:
-  AWS_REGION: eu-central-2
+  AWS_REGION: eu-north-1
 
 concurrency:
   group: portail-leman-${{ github.ref }}
@@ -41,7 +41,7 @@ jobs:
         run: |
           # chaque template est verifie dans la region ou il est deploye
           # (les fichiers d'abord : --regions accepte plusieurs valeurs et avalerait les noms de fichiers)
-          cfn-lint $(ls templates/*.yaml | grep -v us-east-1) bootstrap/*.yaml --non-zero-exit-code error --regions eu-central-2
+          cfn-lint $(ls templates/*.yaml | grep -v us-east-1) bootstrap/*.yaml --non-zero-exit-code error --regions eu-north-1
           cfn-lint templates/*us-east-1.yaml --non-zero-exit-code error --regions us-east-1
       - name: shellcheck des scripts
         run: shellcheck -S error scripts/*.sh tests/*.sh

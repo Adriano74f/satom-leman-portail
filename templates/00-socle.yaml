@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Satom Cloud Network - Portail Leman - 00 Socle : cle KMS, bucket des journaux ALB,
   topic SNS d'exploitation, pre-cles VPN generees dans Secrets Manager.
-  Le budget est dans 00b-budget-us-east-1.yaml (AWS::Budgets::Budget n'existe pas en eu-central-2).
+  Le budget est dans 00b-budget-us-east-1.yaml (AWS::Budgets::Budget n existe pas dans CloudFormation hors us-east-1 sur ce compte).
 
 Parameters:
   Environnement:
