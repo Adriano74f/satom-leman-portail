@@ -36,4 +36,5 @@ Chaque sprint livre un template, un contrôle de sécurité, une mesure et une p
 | 20/11 | SCP : us-east-1 interdit sur le compte | Piles globales (WAF, budget) marquées en écart sans bloquer le déploiement du portail |
 | 20/11 | Quotas du compte partagé (IP Elastic, 5 NAT Gateway par zone) | IP Elastic du test animalux libérée ; zone de la NAT paramétrable (`ZoneNat`), NAT déplacée en zone c |
 | 20/11 | `TransitGateway limit exceeded` et CGW `already exists` | Ancienne TGW du module 6 supprimée (quota de 5) ; ASN BGP des sites propres à l'équipe (65451/65452 en dev) car une CGW identique (IP + ASN du cours) existait déjà sur le compte |
+| 20/11 | Pile 04 bloquée 1 h (ressource personnalisée) | Journaux Lambda : `No module named 'cfnresponse'` ; réponse à CloudFormation réécrite avec urllib, `ServiceTimeout` 900 s pour ne plus attendre 1 h |
 | 20/11 | Recréation à l'identique | `supprimer.sh` vide le bucket versionné et purge les secrets en attente de suppression |
