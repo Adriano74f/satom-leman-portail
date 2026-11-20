@@ -22,6 +22,11 @@ Parameters:
     AllowedValues: [peering, tgw]
     Default: tgw
     Description: Chemin prod <-> dev (sprint 5 = peering, sprint 6 = tgw). Les deux ne peuvent pas porter la meme route.
+  ActiverTgw:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: false si le quota de Transit Gateway du compte est atteint (VPN et association DX desactives)
   ActiverVpn:
     Type: String
     AllowedValues: ['true', 'false']
@@ -47,10 +52,12 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
 Conditions:
-  Peering: !Equals [!Ref ModeInterDev, peering]
-  Tgw: !Equals [!Ref ModeInterDev, tgw]
-  Vpn: !Equals [!Ref ActiverVpn, 'true']
+  TgwActif: !Equals [!Ref ActiverTgw, 'true']
+  Peering: !Or [!Equals [!Ref ModeInterDev, peering], !Not [!Condition TgwActif]]
+  Tgw: !And [!Equals [!Ref ModeInterDev, tgw], !Condition TgwActif]
+  Vpn: !And [!Equals [!Ref ActiverVpn, 'true'], !Condition TgwActif]
   Dx: !Equals [!Ref ActiverDx, 'true']
+  DxAssocie: !And [!Condition Dx, !Condition TgwActif]
 
 Resources:
   # ================= Sprint 5 : VPC de developpement =================
@@ -157,6 +164,7 @@ Resources:
   # ================= Sprint 6 : Transit Gateway =================
   Tgw:
     Type: AWS::EC2::TransitGateway
+    Condition: TgwActif
     Properties:
       AmazonSideAsn: 64512
       Description: !Sub 'tgw-leman-${Environnement}-${Equipe}'
@@ -171,6 +179,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   AttachProd:
     Type: AWS::EC2::TransitGatewayVpcAttachment
+    Condition: TgwActif
     Properties:
       TransitGatewayId: !Ref Tgw
       VpcId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
@@ -184,6 +193,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   AttachDev:
     Type: AWS::EC2::TransitGatewayVpcAttachment
+    Condition: TgwActif
     Properties:
       TransitGatewayId: !Ref Tgw
       VpcId: !Ref VpcDev
@@ -196,6 +206,7 @@ Resources:
 
   TgwRtProd:
     Type: AWS::EC2::TransitGatewayRouteTable
+    Condition: TgwActif
     Properties:
       TransitGatewayId: !Ref Tgw
       Tags:
@@ -205,6 +216,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   TgwRtDev:
     Type: AWS::EC2::TransitGatewayRouteTable
+    Condition: TgwActif
     Properties:
       TransitGatewayId: !Ref Tgw
       Tags:
@@ -214,6 +226,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   TgwRtVpn:
     Type: AWS::EC2::TransitGatewayRouteTable
+    Condition: TgwActif
     Properties:
       TransitGatewayId: !Ref Tgw
       Tags:
@@ -224,9 +237,11 @@ Resources:
 
   AssocTgwProd:
     Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Condition: TgwActif
     Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtProd }
   AssocTgwDev:
     Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Condition: TgwActif
     Properties: { TransitGatewayAttachmentId: !Ref AttachDev, TransitGatewayRouteTableId: !Ref TgwRtDev }
   PropagDevVersProd:
     Type: AWS::EC2::TransitGatewayRouteTablePropagation
@@ -238,6 +253,7 @@ Resources:
     Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtDev }
   PropagProdVersVpn:
     Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Condition: TgwActif
     Properties: { TransitGatewayAttachmentId: !Ref AttachProd, TransitGatewayRouteTableId: !Ref TgwRtVpn }
 
   RouteTgwProdVersDev:
@@ -444,7 +460,7 @@ Resources:
         - { Key: Environnement, Value: !Ref Environnement }
   AssocDxTgw:
     Type: AWS::DirectConnect::DirectConnectGatewayAssociation
-    Condition: Dx
+    Condition: DxAssocie
     Properties:
       DirectConnectGatewayId: !Ref DxGw
       AssociatedGatewayId: !Ref Tgw
@@ -453,6 +469,7 @@ Resources:
 
 Outputs:
   TgwId:
+    Condition: TgwActif
     Value: !Ref Tgw
     Export: { Name: !Sub 'leman-${Environnement}-${Equipe}-TgwId' }
   VpcDevId:
