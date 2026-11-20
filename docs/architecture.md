@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  subgraph BAN["GIT – Satom · TP final – Portail Léman en IaC (eu-central-2)"]
+  subgraph BAN["GIT – Satom · TP final – Portail Léman en IaC (eu-north-1)"]
     direction LR
     CLI(("🌐 Conseillers")):::inet
     WAF["🛡️ AWS WAF<br/>règles gérées + débit"]:::sec

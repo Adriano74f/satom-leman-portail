@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Satom Cloud Network - Portail Leman - 00b Budget, deploye en us-east-1
-  (AWS::Budgets::Budget n'est pas disponible dans CloudFormation en eu-central-2) :
+  (AWS::Budgets::Budget : ressource globale, deployee dans la region de reference us-east-1) :
   150 CHF (165 USD) par mois, alerte a 80 % du reel et a 100 % de la prevision.
 
 Parameters:

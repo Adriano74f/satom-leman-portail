@@ -5,7 +5,7 @@ set -euo pipefail
 
 ENV="${1:?Usage: $0 dev|prod}"
 RACINE="$(cd "$(dirname "$0")/.." && pwd)"
-REGION="${AWS_REGION:-eu-central-2}"
+REGION="${AWS_REGION:-eu-north-1}"
 EQUIPE="$(jq -r .Equipe "$RACINE/parameters/$ENV.json")"
 P="stack-leman-$ENV"
 

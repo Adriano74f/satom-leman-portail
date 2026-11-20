@@ -29,4 +29,6 @@ Chaque sprint livre un template, un contrôle de sécurité, une mesure et une p
 | 20/11 | 503 des groupes cibles (module 9) | Groupes cibles sans Target Optimizer |
 | 20/11 | Certificat ALB | Auto-signé importé dans ACM par le script (clé jamais versionnée) ; CloudFront contacte l'origine en HTTP 80 restreint au préfixe CloudFront |
 | 20/11 | cfn-lint E3006 : `AWS::Budgets::Budget` inexistant en eu-central-2 | Budget déplacé dans `00b-budget-us-east-1.yaml`, déployé en us-east-1 |
+| 20/11 | cfn-guard bloque la PR 4 (règle DX : valeur calculée comparée à une chaîne) | Règle corrigée : contrôle des valeurs littérales ; règle TLS limitée aux écouteurs HTTPS |
+| 20/11 | Région | Le compte de formation travaille en eu-north-1 (eu-central-2 est une région à activer) : région changée par une seule variable `AWS_REGION` ; les templates sont indépendants de la région |
 | 20/11 | Recréation à l'identique | `supprimer.sh` vide le bucket versionné et purge les secrets en attente de suppression |

@@ -2,13 +2,13 @@
 # Deploie le portail Leman pour un environnement, toujours via des change sets (aws cloudformation deploy).
 # Utilise par la pipeline ET, si la pipeline n'a pas de droits AWS, depuis CloudShell (meme script, memes fichiers).
 #   Usage : scripts/deployer.sh dev|prod
-# Variables optionnelles : AWS_REGION (defaut eu-central-2), AWS_CFN_ROLE_ARN (role d'execution CloudFormation),
+# Variables optionnelles : AWS_REGION (defaut eu-north-1), AWS_CFN_ROLE_ARN (role d'execution CloudFormation),
 #                          EMAIL_EXPLOITATION (abonnement SNS et budget, jamais ecrit dans le depot)
 set -euo pipefail
 
 ENV="${1:?Usage: $0 dev|prod}"
 RACINE="$(cd "$(dirname "$0")/.." && pwd)"
-REGION="${AWS_REGION:-eu-central-2}"
+REGION="${AWS_REGION:-eu-north-1}"
 FICHIER_PARAMS="$RACINE/parameters/$ENV.json"
 [ -f "$FICHIER_PARAMS" ] || { echo "Fichier de parametres introuvable : $FICHIER_PARAMS"; exit 1; }
 
