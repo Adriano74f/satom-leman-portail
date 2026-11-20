@@ -118,7 +118,7 @@ fi
 section "Chemins reseau - VPC Reachability Analyzer (sprints 3, 5, 6)"
 R="$(analyse "$WEB" "$APP" 8080)"; ligne 3 "web-01 -> app-01:8080" "accessible" "${R%%;*}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
 R="$(analyse "$WEB" "$APP" 22)";   ligne 3 "web-01 -> app-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
-R="$(analyse "$DEV" "$APP" 8080)"; ligne 6 "dev-01 -> app-01:8080 (chemin)" "accessible via tgw-" "${R%%;*} ${R#*;}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
+R="$(analyse "$DEV" "$APP" 8080)"; ligne 5 "dev-01 -> app-01:8080 (chemin)" "accessible (pcx- ou tgw-)" "${R%%;*} ${R#*;}" "$([ "${R%%;*}" = trouve ] && echo OK || echo KO)"
 R="$(analyse "$DEV" "$WEB" 22)";   ligne 5 "dev-01 -> web-01:22" "bloque" "${R%%;*}" "$([ "${R%%;*}" = non ] && echo OK || echo KO)"
 
 # ======================= Sprints 7 et 8 : VPN et Direct Connect =======================
@@ -136,7 +136,7 @@ DX="$(aws directconnect describe-direct-connect-gateways --query "directConnectG
 if [ -n "$DX" ] && [ "$DX" != None ]; then
   ETAT="$(aws directconnect describe-direct-connect-gateway-associations --direct-connect-gateway-id "$DX" --query 'directConnectGatewayAssociations[0].associationState' --output text)"
   PFX="$(aws directconnect describe-direct-connect-gateway-associations --direct-connect-gateway-id "$DX" --query 'directConnectGatewayAssociations[0].allowedPrefixesToDirectConnectGateway[].cidr' --output text)"
-  ligne 8 "dxgw associee a la TGW" "associated" "$ETAT" "$([ "$ETAT" = associated ] && echo OK || echo KO)"
+  ligne 8 "dxgw associee a la TGW" "associated" "$ETAT" "$([ "$ETAT" = associated ] && echo OK || echo ECART)"
   ligne 8 "Prefixes annonces filtres" "pas de 0.0.0.0/0" "$PFX" "$([[ "$PFX" == *0.0.0.0/0* ]] && echo KO || echo OK)"
 fi
 

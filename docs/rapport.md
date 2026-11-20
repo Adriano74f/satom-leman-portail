@@ -41,4 +41,5 @@ Les valeurs obtenues sont celles du dernier run de `tests/run-tests.sh`, conserv
 | 6 | PR relues par moi-même | Travail en solo | Relecteur requis sur l'environnement `prod` ; en équipe, une approbation obligatoire sur `main` |
 | 7 | Région eu-north-1 au lieu d'eu-central-2 | Région du compte de formation (Zurich non activée) | Activer eu-central-2 et changer `AWS_REGION` : aucun template à modifier |
 | 8 | WAF CloudFront et budget non déployés | SCP du compte de formation : toute action en us-east-1 est refusée (`cloudformation:ValidateTemplate` en refus explicite) | Sur un compte du client, autoriser us-east-1 pour les piles globales : `06a-waf` et `00b-budget` sont prêtes, et la distribution reçoit l'ACL par paramètre |
-| 9 | Amorce IAM hors pipeline | Prérequis de toute identité OIDC | Template versionné dans `bootstrap/`, déployé une fois |
+| 9 | Transit Gateway, VPN et association DX non déployés en dev | Quota de 5 TGW du compte atteint par les autres équipes | Demande d'augmentation de quota ou compte dédié, puis `ActiverTgw=true`, `ActiverVpn=true` et `ModeInterDev=tgw` dans `parameters/dev.json` (aucun template à modifier) |
+| 10 | Amorce IAM hors pipeline | Prérequis de toute identité OIDC | Template versionné dans `bootstrap/`, déployé une fois |
