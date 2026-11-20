@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Satom Cloud Network - Portail Leman - 07 Supervision (sprint 12) : VPC Flow Logs vers un log group chiffre KMS,
+  requete Logs Insights enregistree, alarmes (5xx, latence p95, tunnels VPN), tableau de bord,
+  services de securite du compte (GuardDuty, Security Hub, regles AWS Config) activables par parametre.
+
+Parameters:
+  Environnement:
+    Type: String
+    AllowedValues: [dev, prod]
+  Equipe:
+    Type: String
+    AllowedPattern: '^[a-z0-9]{2,8}$'
+  ActiverVpn:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  CreerGuardDuty:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Un seul detecteur par compte et par region (compte partage) - true seulement s'il n'existe pas
+  CreerSecurityHub:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+  CreerReglesConfig:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Necessite un enregistreur AWS Config deja actif dans la region
+  RetentionJours:
+    Type: Number
+    Default: 7
+
+Conditions:
+  Vpn: !Equals [!Ref ActiverVpn, 'true']
+  GuardDuty: !Equals [!Ref CreerGuardDuty, 'true']
+  SecurityHub: !Equals [!Ref CreerSecurityHub, 'true']
+  ReglesConfig: !Equals [!Ref CreerReglesConfig, 'true']
+
+Resources:
+  # ---------- VPC Flow Logs ----------
+  JournalFluxVpc:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/leman/${Environnement}-${Equipe}/vpc-flow'
+      RetentionInDays: !Ref RetentionJours
+      KmsKeyId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-CleKmsArn' }
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  RoleFluxVpc:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'leman-${Environnement}-${Equipe}-flow-logs'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: vpc-flow-logs.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition: { StringEquals: { 'aws:SourceAccount': !Ref 'AWS::AccountId' } }
+      Policies:
+        - PolicyName: ecriture-journal-flux
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub '${JournalFluxVpc.Arn}:*'
+      Tags:
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+  FluxVpcProd:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpcId' }
+      TrafficType: ALL
+      MaxAggregationInterval: 60
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref JournalFluxVpc
+      DeliverLogsPermissionArn: !GetAtt RoleFluxVpc.Arn
+      Tags:
+        - { Key: Name, Value: !Sub 'fl-vpc-prod-leman-${Environnement}-${Equipe}' }
+        - { Key: Projet, Value: SatomCloudNetwork }
+        - { Key: Equipe, Value: !Ref Equipe }
+        - { Key: Environnement, Value: !Ref Environnement }
+
+  RequeteRejets:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub 'leman/${Environnement}-${Equipe}/flux-rejetes'
+      LogGroupNames: [!Ref JournalFluxVpc]
+      QueryString: |
+        parse @message "* * * * * * * * * * * * * *" as ver, compte, eni, src, dst, sport, dport, proto, paquets, octets, debut, fin, act, statut
+        | filter act = "REJECT"
+        | stats count(*) as rejets by src, dst, dport
+        | sort rejets desc
+        | limit 20
+
+  # ---------- Alarmes ----------
+  Alarme5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'alarm-5xx-portail-${Environnement}-${Equipe}'
+      AlarmDescription: Plus de 5 erreurs 5xx des cibles en 1 minute (notification en moins de 5 min)
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-AlbNomComplet' }
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [{ 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SujetSns' }]
+      OKActions: [{ 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SujetSns' }]
+
+  AlarmeLatence:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'alarm-latence-p95-${Environnement}-${Equipe}'
+      AlarmDescription: Temps de reponse des cibles p95 au-dessus de 500 ms sur 5 minutes
+      Namespace: AWS/ApplicationELB
+      MetricName: TargetResponseTime
+      Dimensions:
+        - Name: LoadBalancer
+          Value: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-AlbNomComplet' }
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0.5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [{ 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SujetSns' }]
+
+  AlarmeTunnelsSiege:
+    Type: AWS::CloudWatch::Alarm
+    Condition: Vpn
+    Properties:
+      AlarmName: !Sub 'alarm-tunnels-siege-${Environnement}-${Equipe}'
+      AlarmDescription: Moins d'un tunnel actif sur le VPN du siege
+      Namespace: AWS/VPN
+      MetricName: TunnelState
+      Dimensions:
+        - Name: VpnId
+          Value: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-VpnSiege' }
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [{ 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-SujetSns' }]
+
+  # ---------- Tableau de bord ----------
+  TableauDeBord:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'db-portail-leman-${Environnement}-${Equipe}'
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              { "type": "metric", "x": 0, "y": 0, "width": 8, "height": 6,
+                "properties": { "title": "Sante des cibles web", "region": "${AWS::Region}", "stat": "Average", "period": 60,
+                  "metrics": [ [ "AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${TgWeb}", "LoadBalancer", "${Alb}" ],
+                               [ ".", "UnHealthyHostCount", ".", ".", ".", "." ] ] } },
+              { "type": "metric", "x": 8, "y": 0, "width": 8, "height": 6,
+                "properties": { "title": "Temps de reponse p95 (s)", "region": "${AWS::Region}", "stat": "p95", "period": 60,
+                  "metrics": [ [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${Alb}" ] ],
+                  "annotations": { "horizontal": [ { "label": "Seuil 500 ms", "value": 0.5 } ] } } },
+              { "type": "metric", "x": 16, "y": 0, "width": 8, "height": 6,
+                "properties": { "title": "Erreurs 5xx et requetes", "region": "${AWS::Region}", "stat": "Sum", "period": 60,
+                  "metrics": [ [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${Alb}" ],
+                               [ ".", "RequestCount", ".", "." ] ] } },
+              { "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+                "properties": { "title": "CloudFront : taux de cache et 5xx (%)", "region": "us-east-1", "stat": "Average", "period": 60,
+                  "metrics": [ [ "AWS/CloudFront", "CacheHitRate", "DistributionId", "${Dist}", "Region", "Global" ],
+                               [ ".", "5xxErrorRate", ".", ".", ".", "." ] ] } },
+              { "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+                "properties": { "title": "Tunnels VPN (1 = UP)", "region": "${AWS::Region}", "stat": "Maximum", "period": 300,
+                  "metrics": [ [ "AWS/VPN", "TunnelState" ] ] } },
+              { "type": "log", "x": 0, "y": 12, "width": 24, "height": 6,
+                "properties": { "title": "Flux rejetes (VPC Flow Logs)", "region": "${AWS::Region}", "view": "table",
+                  "query": "SOURCE '${JournalFluxVpc}' | parse @message \"* * * * * * * * * * * * * *\" as ver, compte, eni, src, dst, sport, dport, proto, paquets, octets, debut, fin, act, statut | filter act = \"REJECT\" | stats count(*) as rejets by src, dst, dport | sort rejets desc | limit 20" } }
+            ]
+          }
+        - Alb: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-AlbNomComplet' }
+          TgWeb: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-TgWebNomComplet' }
+          Dist: { 'Fn::ImportValue': !Sub 'leman-${Environnement}-${Equipe}-DistributionId' }
+
+  # ---------- Services de securite du compte ----------
+  DetecteurGuardDuty:
+    Type: AWS::GuardDuty::Detector
+    Condition: GuardDuty
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+  HubSecurite:
+    Type: AWS::SecurityHub::Hub
+    Condition: SecurityHub
+    Properties:
+      EnableDefaultStandards: true
+  RegleSshRestreint:
+    Type: AWS::Config::ConfigRule
+    Condition: ReglesConfig
+    Properties:
+      ConfigRuleName: !Sub 'leman-${Environnement}-${Equipe}-ssh-restreint'
+      Source: { Owner: AWS, SourceIdentifier: INCOMING_SSH_DISABLED }
+      Scope: { ComplianceResourceTypes: ['AWS::EC2::SecurityGroup'] }
+  ReglePortsAutorises:
+    Type: AWS::Config::ConfigRule
+    Condition: ReglesConfig
+    Properties:
+      ConfigRuleName: !Sub 'leman-${Environnement}-${Equipe}-ports-publics'
+      Source: { Owner: AWS, SourceIdentifier: VPC_SG_OPEN_ONLY_TO_AUTHORIZED_PORTS }
+      InputParameters: { authorizedTcpPorts: '443' }
+      Scope: { ComplianceResourceTypes: ['AWS::EC2::SecurityGroup'] }
+  RegleJournauxChiffres:
+    Type: AWS::Config::ConfigRule
+    Condition: ReglesConfig
+    Properties:
+      ConfigRuleName: !Sub 'leman-${Environnement}-${Equipe}-journaux-chiffres'
+      Source: { Owner: AWS, SourceIdentifier: CLOUDWATCH_LOG_GROUP_ENCRYPTED }
+  RegleVolumesChiffres:
+    Type: AWS::Config::ConfigRule
+    Condition: ReglesConfig
+    Properties:
+      ConfigRuleName: !Sub 'leman-${Environnement}-${Equipe}-volumes-chiffres'
+      Source: { Owner: AWS, SourceIdentifier: ENCRYPTED_VOLUMES }
+      Scope: { ComplianceResourceTypes: ['AWS::EC2::Volume'] }
+
+Outputs:
+  JournalFluxVpc:
+    Value: !Ref JournalFluxVpc
+  TableauDeBord:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=db-portail-leman-${Environnement}-${Equipe}'
