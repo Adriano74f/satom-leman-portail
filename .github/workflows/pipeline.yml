@@ -40,8 +40,9 @@ jobs:
       - name: cfn-lint sur chaque template (une erreur bloque la PR)
         run: |
           # chaque template est verifie dans la region ou il est deploye
-          cfn-lint --non-zero-exit-code error --regions eu-central-2 $(ls templates/*.yaml | grep -v us-east-1) bootstrap/*.yaml
-          cfn-lint --non-zero-exit-code error --regions us-east-1 templates/*us-east-1.yaml
+          # (les fichiers d'abord : --regions accepte plusieurs valeurs et avalerait les noms de fichiers)
+          cfn-lint $(ls templates/*.yaml | grep -v us-east-1) bootstrap/*.yaml --non-zero-exit-code error --regions eu-central-2
+          cfn-lint templates/*us-east-1.yaml --non-zero-exit-code error --regions us-east-1
       - name: shellcheck des scripts
         run: shellcheck -S error scripts/*.sh tests/*.sh
 
