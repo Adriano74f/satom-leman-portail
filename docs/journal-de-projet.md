@@ -34,4 +34,5 @@ Chaque sprint livre un template, un contrôle de sécurité, une mesure et une p
 | 20/11 | OIDC refusé (`AccessDenied`) | CloudTrail : GitHub envoie le sujet `repo:<compte>@<id>/<depot>@<id>:…` (identifiants immuables) ; condition du rôle élargie aux deux formats |
 | 20/11 | Étape 3 verte malgré un échec | `deployer.sh | tee` masquait le code de retour : pipeline en `shell: bash` (`-eo pipefail`) |
 | 20/11 | SCP : us-east-1 interdit sur le compte | Piles globales (WAF, budget) marquées en écart sans bloquer le déploiement du portail |
+| 20/11 | Quotas du compte partagé (IP Elastic, 5 NAT Gateway par zone) | IP Elastic du test animalux libérée ; zone de la NAT paramétrable (`ZoneNat`), NAT déplacée en zone c |
 | 20/11 | Recréation à l'identique | `supprimer.sh` vide le bucket versionné et purge les secrets en attente de suppression |
