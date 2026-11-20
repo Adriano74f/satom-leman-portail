@@ -75,6 +75,10 @@ analyse() { # analyse <source> <destination> <port> -> "trouve|non;composants"
             --query NetworkInsightsPath.NetworkInsightsPathId --output text)"
   an="$(aws ec2 start-network-insights-analysis --region "$REGION" --network-insights-path-id "$chemin" \
         --query NetworkInsightsAnalysis.NetworkInsightsAnalysisId --output text)"
+  if [ -z "$an" ] || [ "$an" = None ]; then   # droit refuse : on ne boucle pas inutilement
+    aws ec2 delete-network-insights-path --region "$REGION" --network-insights-path-id "$chemin" >/dev/null 2>&1
+    echo "erreur;"; return
+  fi
   for _ in $(seq 1 40); do
     sleep 6
     res="$(aws ec2 describe-network-insights-analyses --region "$REGION" --network-insights-analysis-ids "$an" \

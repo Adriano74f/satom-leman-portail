@@ -141,6 +141,9 @@ Resources:
                   - ec2:StartNetworkInsightsAnalysis
                   - ec2:DeleteNetworkInsightsPath
                   - ec2:DeleteNetworkInsightsAnalysis
+                  - tiros:CreateQuery
+                  - tiros:GetQueryAnswer
+                  - tiros:GetQueryExplanation
                   - ec2:CreateTags
                   - ec2:StopInstances
                   - ec2:StartInstances
