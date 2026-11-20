@@ -352,11 +352,24 @@ Resources:
       Role: !GetAtt RoleLectureAttachements.Arn
       Code:
         ZipFile: |
-          import time, boto3, cfnresponse
+          import json, time, urllib.request, boto3
+
+          def repondre(event, statut, donnees, id_physique, raison=''):
+              # Reponse a CloudFormation sans le module cfnresponse (absent du runtime python3.12)
+              corps = json.dumps({
+                  'Status': statut, 'Reason': raison or 'Voir CloudWatch Logs',
+                  'PhysicalResourceId': id_physique or event.get('PhysicalResourceId') or event['LogicalResourceId'],
+                  'StackId': event['StackId'], 'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'], 'Data': donnees}).encode()
+              req = urllib.request.Request(event['ResponseURL'], data=corps, method='PUT',
+                                           headers={'Content-Type': '', 'Content-Length': str(len(corps))})
+              urllib.request.urlopen(req, timeout=30).read()
+
           def handler(event, context):
+              print(json.dumps({k: v for k, v in event.items() if k != 'ResponseURL'}))
               try:
                   if event['RequestType'] == 'Delete':
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event.get('PhysicalResourceId'))
+                      repondre(event, 'SUCCESS', {}, event.get('PhysicalResourceId'))
                       return
                   vpn = event['ResourceProperties']['VpnId']
                   ec2 = boto3.client('ec2')
@@ -367,12 +380,13 @@ Resources:
                       prets = [a for a in res if a['State'] == 'available']
                       if prets:
                           aid = prets[0]['TransitGatewayAttachmentId']
-                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {'AttachmentId': aid}, aid)
+                          repondre(event, 'SUCCESS', {'AttachmentId': aid}, aid)
                           return
                       time.sleep(20)
                   raise Exception('Attachement TGW du VPN %s introuvable' % vpn)
               except Exception as err:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Erreur': str(err)})
+                  print('ERREUR', err)
+                  repondre(event, 'FAILED', {}, event.get('PhysicalResourceId'), str(err)[:200])
       Tags:
         - { Key: Projet, Value: SatomCloudNetwork }
         - { Key: Equipe, Value: !Ref Equipe }
@@ -382,12 +396,14 @@ Resources:
     Condition: Vpn
     Properties:
       ServiceToken: !GetAtt FonctionAttachementVpn.Arn
+      ServiceTimeout: 900
       VpnId: !Ref VpnSiege
   AttachVpnAgence:
     Type: Custom::AttachementVpn
     Condition: Vpn
     Properties:
       ServiceToken: !GetAtt FonctionAttachementVpn.Arn
+      ServiceTimeout: 900
       VpnId: !Ref VpnAgence
 
   AssocTgwVpnSiege:
