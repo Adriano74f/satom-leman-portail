@@ -56,13 +56,16 @@ rule sujets_sns_chiffres when %sujets !empty {
   %sujets.Properties.KmsMasterKeyId exists
 }
 
-let ecouteurs_https = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::Listener'
-                                   Properties.Protocol == 'HTTPS' ]
-rule alb_tls_12_minimum when %ecouteurs_https !empty {
-  %ecouteurs_https.Properties.SslPolicy in ['ELBSecurityPolicy-TLS13-1-2-2021-06',
-                                           'ELBSecurityPolicy-TLS13-1-2-Res-2021-06',
-                                           'ELBSecurityPolicy-TLS-1-2-2017-01',
-                                           'ELBSecurityPolicy-TLS-1-2-Ext-2018-06']
+let ecouteurs = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::Listener' ]
+rule alb_tls_12_minimum when %ecouteurs !empty {
+  %ecouteurs {
+    when Properties.Protocol == 'HTTPS' {
+      Properties.SslPolicy in ['ELBSecurityPolicy-TLS13-1-2-2021-06',
+                               'ELBSecurityPolicy-TLS13-1-2-Res-2021-06',
+                               'ELBSecurityPolicy-TLS-1-2-2017-01',
+                               'ELBSecurityPolicy-TLS-1-2-Ext-2018-06']
+    }
+  }
 }
 
 let albs = Resources.*[ Type == 'AWS::ElasticLoadBalancingV2::LoadBalancer' ]
@@ -90,10 +93,15 @@ rule prive_jamais_vers_igw when %routes_igw !empty {
   %routes_igw.Properties.RouteTableId.Ref in ['RtPublic', 'RtNat']
 }
 
-# --- 5. Direct Connect : aucune route par defaut annoncee ---
+# --- 5. Direct Connect : aucune route par defaut annoncee (valeurs litterales ;
+#        les valeurs calculees !Sub '<prefixe>.0.0/16' sont des /16 par construction) ---
 let assoc_dx = Resources.*[ Type == 'AWS::DirectConnect::DirectConnectGatewayAssociation' ]
 rule dx_sans_route_par_defaut when %assoc_dx !empty {
-  %assoc_dx.Properties.AllowedPrefixesToDirectConnectGateway[*] != '0.0.0.0/0'
+  %assoc_dx.Properties.AllowedPrefixesToDirectConnectGateway[*] {
+    when this is_string {
+      this != '0.0.0.0/0'
+    }
+  }
 }
 
 # --- 6. Aucun secret en clair : les pre-cles VPN sont des references Secrets Manager ---
